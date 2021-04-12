@@ -7,6 +7,5 @@ obj
 ProjectSettings
 Packages
 ReproProjectSettings.asset
-*.meta
 *.sln
 *.csproj
