@@ -4,6 +4,7 @@ using UnityEditor;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine.Rendering;
+using System;
 
 /// <summary>
 /// Create a cut down repro project by copying the dependencies for a few key assets.
@@ -25,6 +26,17 @@ public class ReproProjectWizard : EditorWindow
     private int m_TextureScaleIndex = 0;
     private int[] m_TextureScaleFactors = new int[] { 1, 2, 4, 8, 16 };
     private string[] m_TextureScaleFactorNames = new string[] { "Full", "Half", "Quarter", "Eighth", "Sixteenth" };
+    private bool m_ReplaceTextures;
+    private string m_ReplacementTexturePath;
+
+    private bool m_CopyLocalPackages;
+    private bool m_CopyCachedPackages;
+
+    private int m_ActiveTab;
+    private BuildTarget m_BuildTarget;
+
+    private Texture m_ReplacementTexture;
+
 
     public string NewProjectPath
     {
@@ -66,7 +78,12 @@ public class ReproProjectWizard : EditorWindow
 
     // Input list of paths and wildcards to assets that are to be included in the new project.
     // All dependencies of these assets are also included in the new project.
+    [SerializeField]
     private List<InputListItem> m_InputItems = new List<InputListItem>();
+
+    //TODO DR: Include assets per session (right before generating the project) in case you need to remove some of them afterwards.
+    [SerializeField]
+    private List<InputListItem> m_SessionInputItems = new List<InputListItem>();
 
     // List of assets that have to be included in any new project.
     // Can be edited but will likely always be the same.
@@ -96,7 +113,7 @@ public class ReproProjectWizard : EditorWindow
     [MenuItem("Window/Repro Project Wizard")]
     public static void CreateWindow()
     {
-        ReproProjectWizard window = EditorWindow.GetWindow<ReproProjectWizard>(utility: true, title: "Repro Project Wizard", focus: true);
+        ReproProjectWizard window = EditorWindow.GetWindow<ReproProjectWizard>(utility: true, title: "Repro Project Wizard - Engine Support Edition", focus: true);
         window.Initialize();
     }
 
@@ -105,15 +122,15 @@ public class ReproProjectWizard : EditorWindow
         EditorGUI.BeginChangeCheck();
 
         // List of all 'root' assets to include in the new project
-        GUILayout.Label("Assets to Copy");
+        GUILayout.Label("Assets to Copy"); //
         EditorGUI.indentLevel++;
         EditorGUILayout.HelpBox("List all assets you would like to copy to the new project. All dependencies of that asset will also be added to the project. For example, add a scene file to ensure everything referenced in that scene is added.", MessageType.Info);
-        OnGUIInputList(m_InputItems);
+        OnGUIInputList(/*m_InputItems*/m_SessionInputItems);
         EditorGUI.indentLevel--;
 
         // Give an option to add the current scene if it hasn't been added already
 #if UNITY_5_3_OR_NEWER
-      string currentScene = SceneManager.GetActiveScene().path;
+        string currentScene = SceneManager.GetActiveScene().path;
 #else
         string currentScene = EditorApplication.currentScene;
 #endif
@@ -121,7 +138,8 @@ public class ReproProjectWizard : EditorWindow
         {
             if (GUILayout.Button("Add Current Scene"))
             {
-                m_InputItems.Add(new InputListItem() { AssetType = ReproProjectAssetType.Wildcard, AssetPath = currentScene, AssetObject = null });
+                /*m_InputItems*/
+                m_SessionInputItems.Add(new InputListItem() { AssetType = ReproProjectAssetType.Wildcard, AssetPath = currentScene, AssetObject = null });
             }
         }
         GUILayout.FlexibleSpace();
@@ -150,25 +168,90 @@ public class ReproProjectWizard : EditorWindow
             EditorGUILayout.HelpBox("Select a valid location for the new project.", MessageType.Error);
         }
         GUILayout.Space(5);
-        m_ProjectPathsVisible = EditorGUILayout.Foldout(m_ProjectPathsVisible, "Common Files");
-        if (m_ProjectPathsVisible)
-        {
-            EditorGUI.indentLevel++;
-            OnGUIInputList(m_ProjectItems);
-            EditorGUILayout.HelpBox("Add assets here that need to be included in any repro project. Specifically, include assets referenced by the Graphics settings. This is also a good place to include assets loaded directly from code.", MessageType.Info);
-            EditorGUI.indentLevel--;
-        }
-        GUILayout.Space(5);
-
         EditorGUILayout.BeginHorizontal();
         m_OpenProject = EditorGUILayout.Toggle("Open project after export", m_OpenProject);
-        m_TextureScaleIndex = EditorGUILayout.Popup("Texture Size", m_TextureScaleIndex, m_TextureScaleFactorNames);
-        m_TextureScaleFactor = m_TextureScaleFactors[m_TextureScaleIndex];
         EditorGUILayout.EndHorizontal();
+
+        GUILayout.Space(10);
+        GUILayout.Label("Other Options");
+
+        //TODO DR: Add tabs
+        string[] tabs = new string[] { "Common Files", "Textures", "Packages", "Assemblies", "Shaders" };
+        m_ActiveTab = GUILayout.Toolbar(m_ActiveTab, tabs, GUILayout.ExpandWidth(true));
+
+        switch (m_ActiveTab)
+        {
+            case 0:
+                GUILayout.Label("Common Files");
+                GUILayout.Space(5);
+                EditorGUI.indentLevel++;
+                OnGUIInputList(m_ProjectItems);
+                EditorGUILayout.HelpBox("Add assets here that need to be included in any repro project. Specifically, include assets referenced by the Graphics settings. This is also a good place to include assets loaded directly from code.", MessageType.Info);
+                EditorGUI.indentLevel--;
+                break;
+            case 1:
+                GUILayout.Space(5);
+                GUILayout.Label("Textures");
+                EditorGUILayout.BeginHorizontal();
+                EditorGUI.indentLevel++;
+                m_TextureScaleIndex = EditorGUILayout.Popup("Texture Size", m_TextureScaleIndex, m_TextureScaleFactorNames);
+                m_TextureScaleFactor = m_TextureScaleFactors[m_TextureScaleIndex];
+                EditorGUILayout.EndHorizontal();
+
+                //TODO DR: Replace textures
+                EditorGUILayout.BeginHorizontal();
+                m_ReplaceTextures = EditorGUILayout.Toggle("Replace textures", m_ReplaceTextures);
+                if (m_ReplaceTextures)
+                {
+
+                    m_ReplacementTexture = EditorGUILayout.ObjectField(m_ReplacementTexture, typeof(UnityEngine.Texture), allowSceneObjects: false) as Texture;
+                    m_ReplacementTexturePath = m_ReplacementTexture != null ? AssetDatabase.GetAssetPath(m_ReplacementTexture) : "";
+
+                }
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.BeginHorizontal();
+                bool m_StripTextures = false;
+                m_StripTextures = EditorGUILayout.Toggle("Strip all textures", m_StripTextures);
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.HelpBox("Resize, strip or replace the project's textures of them with a specific one", MessageType.Info);
+                EditorGUI.indentLevel--;
+
+                break;
+            case 2:
+                GUILayout.Space(5);
+                //GUILayout.Box()
+                GUILayout.Label("Packages");
+
+                EditorGUI.indentLevel++;
+
+                //TODO DR: Copy packages
+                EditorGUILayout.BeginHorizontal();
+                m_CopyLocalPackages = EditorGUILayout.Toggle("Copy Local packages", m_CopyLocalPackages);
+                m_CopyCachedPackages = EditorGUILayout.Toggle("Copy Cached packages", m_CopyCachedPackages);
+                if (GUILayout.Button("Open Packages folder"))
+                {
+                    OpenFolderInFileExplorer("Packages");
+                }
+                if (GUILayout.Button("Open Cached Packages folder"))
+                {
+                    OpenFolderInFileExplorer("Library/PackageCache");
+                }
+                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.HelpBox("Include external packages and packages dependencies.", MessageType.Info);
+                EditorGUI.indentLevel--;
+
+                break;
+            default:
+                break;
+        }
+
+
+
         if (GUILayout.Button("Create Project"))
         {
             if (!IsInputValid())
             {
+                //TODO: We should be able to copy everything even if no assets have been selected?
                 EditorUtility.DisplayDialog("Error", "No assets to copy to the new project.", "OK");
             }
             else if (!IsProjectPathValid())
@@ -195,7 +278,7 @@ public class ReproProjectWizard : EditorWindow
     {
         for (int i = 0; i < items.Count; i++)
         {
-            InputListItem item = items[i];
+            InputListItem item = items[i]; //
             EditorGUILayout.BeginHorizontal();
 
             // Toggle between text and object selection
@@ -254,6 +337,7 @@ public class ReproProjectWizard : EditorWindow
                 items.RemoveAt(i);
                 i--;
             }
+
             EditorGUILayout.EndHorizontal();
         }
 
@@ -286,6 +370,10 @@ public class ReproProjectWizard : EditorWindow
     /// </summary>
     private void CreateProject()
     {
+        //TODO DR: Clean session items after project has been built.
+        m_InputItems.Clear();
+        m_InputItems = new List<InputListItem>(m_SessionInputItems);
+
         try
         {
             if (Directory.Exists(NewProjectPath) &&
@@ -317,8 +405,9 @@ public class ReproProjectWizard : EditorWindow
             AddFiles("Assets/*.cs");
             AddFiles("Assets/*.rsp");
             AddFiles("Assets/*.asmdef");
-            AddFiles("Packages/manifest.json");
-            AddFiles("Assets/*package.json");
+
+            //TODO DR: Copy local/cached packages found in the manifest
+            AddPackages();
 
             // Get all the dependencies of the graphics settings
             AddGraphicsSettings();
@@ -326,22 +415,64 @@ public class ReproProjectWizard : EditorWindow
             // Find all dependencies
             DisplayProgressBar("Creating Repro Project", "Collect Dependencies", 0.1f, 0.2f);
             AddDependencies(m_ProjectItems);
-            AddDependencies(m_InputItems);
+            AddDependencies(/*m_InputItems*/m_SessionInputItems);
 
             // finally copy over all the assets and dependencies
             DisplayProgressBar("Creating Repro Project", "Assets: ", 0.2f, 1.0f);
             CopyFiles();
 
+            //TODO DR: Open project using a different build target
             if (m_OpenProject)
             {
                 EditorApplication.OpenProject(NewProjectPath);
             }
+            else
+                OpenFolderInFileExplorer(NewProjectPath);
         }
         finally
         {
             ClearProgressBar();
+            ClearSessionItems();
         }
     }
+
+    private void ClearSessionItems()
+    {
+        m_SessionInputItems.Clear();
+        m_SessionInputItems = new List<InputListItem>(m_InputItems);
+        m_FilesToCopy.Clear();
+
+        //Debug.Log("Items in m_InputItems: " + m_InputItems.Count);
+        //Debug.Log("Items in m_SessionInputItems: " + m_SessionInputItems.Count);
+    }
+
+    private void AddPackages()
+    {
+        AddFiles("Packages/manifest.json");
+        AddFiles("Assets/*package.json");
+
+        if (m_CopyLocalPackages)
+            AddFiles("Packages/");
+
+        if (m_CopyCachedPackages)
+            AddFiles("Library/PackageCache/");
+    }
+
+    /*private void AddCachedPackages()
+    {
+        if (m_CopyCachedPackages)
+        {
+            string cachedPackagesPath = Path.Combine(m_CurrentProjectPath, "Library/PackageCache/").Replace("/", "\\");
+            AddFiles(cachedPackagesPath);
+            string[] subdirectories = Directory.GetDirectories(cachedPackagesPath);
+            // Delete Log
+            foreach (var dir in subdirectories)
+            {
+                Debug.Log(dir);
+            }
+            
+        }
+    }*/
 
     /// <summary>
     /// Reset all parameters to the values stored in the settings file.
@@ -366,7 +497,7 @@ public class ReproProjectWizard : EditorWindow
                 }
             }
 
-            CopyItemsFromSettings(m_InputItems, m_Settings.InputFiles);
+            CopyItemsFromSettings(/*m_InputItems*/m_SessionInputItems, m_Settings.InputFiles);
             CopyItemsFromSettings(m_ProjectItems, m_Settings.ProjectFiles);
         }
     }
@@ -387,7 +518,7 @@ public class ReproProjectWizard : EditorWindow
         m_Settings.OpenProject = m_OpenProject;
         m_Settings.TextureScale = m_TextureScaleFactor;
 
-        CopyItemsToSettings(ref m_Settings.InputFiles, m_InputItems);
+        CopyItemsToSettings(ref m_Settings.InputFiles, /*m_InputItems*/m_SessionInputItems);
         CopyItemsToSettings(ref m_Settings.ProjectFiles, m_ProjectItems);
 
         EditorUtility.SetDirty(m_Settings);
@@ -530,7 +661,7 @@ public class ReproProjectWizard : EditorWindow
     /// </summary>
     private void CopyFiles()
     {
-		if (!string.IsNullOrEmpty(m_ProgressBarTitle))
+        if (!string.IsNullOrEmpty(m_ProgressBarTitle))
         {
             EditorUtility.DisplayProgressBar(m_ProgressBarTitle, m_ProgressBarInfo + "Directories", m_ProgressBarStart);
         }
@@ -561,9 +692,9 @@ public class ReproProjectWizard : EditorWindow
 
             if (!File.Exists(destination))
             {
-                if (IsTexture(destination) && (m_TextureScaleFactor > 1))
+                if (IsTexture(destination) && (m_TextureScaleFactor > 1 || m_ReplaceTextures))
                 {
-                    CopyTexture(source, destination, m_TextureScaleFactor);
+                    CopyTexture(source, destination, m_TextureScaleFactor, m_ReplaceTextures);
                 }
                 else
                 {
@@ -633,7 +764,7 @@ public class ReproProjectWizard : EditorWindow
     /// <param name="source"></param>
     /// <param name="destination"></param>
     /// <param name="scaleFactor"></param>
-    private void CopyTexture(string source, string destination, int scaleFactor)
+    private void CopyTexture(string source, string destination, int scaleFactor, bool replaceTextures)
     {
         // load source
         Texture2D sourceTex = new Texture2D(64, 64);
@@ -646,44 +777,75 @@ public class ReproProjectWizard : EditorWindow
         {
             // copy the source to a temp location
             string filename = Path.GetFileName(source);
-            string temppath = Path.Combine(TempPath, filename);
-            File.Copy(source, temppath);
+            string tempPath = Path.Combine(TempPath, filename);
+            if (File.Exists(source))
+                File.Copy(source, tempPath);
 
-            // import the temp texture so we can access formats that aren't png/jpg
-            // need to import once to create the importer object, then a second time after changing the settings, sigh...
-            AssetDatabase.ImportAsset(temppath, ImportAssetOptions.ForceUpdate);
-            TextureImporter importer = AssetImporter.GetAtPath(temppath) as TextureImporter;
-            importer.isReadable = true;
+            if (File.Exists(tempPath))
+            {
+                // import the temp texture so we can access formats that aren't png/jpg
+                // need to import once to create the importer object, then a second time after changing the settings, sigh...
+                AssetDatabase.ImportAsset(tempPath, ImportAssetOptions.ForceUpdate);
+                TextureImporter importer = AssetImporter.GetAtPath(tempPath) as TextureImporter;
+                importer.isReadable = true;
 #if UNITY_5_6_OR_NEWER
-			importer.textureCompression = TextureImporterCompression.Uncompressed;
+                importer.textureCompression = TextureImporterCompression.Uncompressed;
 #else
 			importer.textureFormat = TextureImporterFormat.AutomaticTruecolor;
 #endif
-            AssetDatabase.ImportAsset(temppath, ImportAssetOptions.ForceUpdate);
-            sourceTex = AssetDatabase.LoadAssetAtPath<Texture2D>(temppath);
+                AssetDatabase.ImportAsset(tempPath, ImportAssetOptions.ForceUpdate);
+                sourceTex = AssetDatabase.LoadAssetAtPath<Texture2D>(tempPath);
 
-            // cleanup
-            File.Delete(temppath);
-            File.Delete(temppath + ".meta");
+                // cleanup
+                //if (!tempPath.Contains(".tga")) //TODO DR: Fix tga
+                {
+                    try
+                    {
+                        File.Delete(tempPath);
+                        File.Delete(tempPath + ".meta");
+                    }
+                    catch (Exception)
+                    {
+
+                        //throw;
+                    }
+
+                }
+            }
         }
 
+        Debug.Log("Replacing textures: " + m_ReplacementTexturePath + " - " + replaceTextures);
+
         // scale if required
+        //TODO DR: Tidy up code
         Texture2D destTex = sourceTex;
-        if (scaleFactor != 1)
+        //if (scaleFactor != 1 || replaceTextures)
         {
-            destTex = ScaleTexture2D(sourceTex, scaleFactor);
+
+            if (replaceTextures)
+            {
+                //TODO DR: Make texture readable?
+                destTex = AssetDatabase.LoadAssetAtPath<Texture2D>(m_ReplacementTexturePath);
+                Debug.Log("Replacing textures: " + m_ReplacementTexturePath);
+            }
+            else if (scaleFactor != 1)
+                destTex = ScaleTexture2D(sourceTex, scaleFactor);
         }
 
         // save the result
-        byte[] destData = destTex.EncodeToPNG();
-        File.WriteAllBytes(destination, destData);
+        if (destTex != null)
+        {
+            byte[] destData = destTex.EncodeToPNG();
+            File.WriteAllBytes(destination, destData);
+        }
 
         // cleanup
+        //TODO DR: Fix tga
         if (destTex != sourceTex)
         {
-            Object.DestroyImmediate(destTex);
+            DestroyImmediate(destTex, true); //Works in 2017.4?
         }
-        Object.DestroyImmediate(sourceTex);
+        DestroyImmediate(sourceTex, true);
     }
 
     private static Texture2D ScaleTexture2D(Texture2D origTex, int scaleFactor)
@@ -695,14 +857,17 @@ public class ReproProjectWizard : EditorWindow
         var newPix = new Color[newTex.width * newTex.height];
 
         // Copy pixels
-        for (var y = 0; y < newTex.height; y++)
+        if (newTex.width > 1 && newTex.height > 1)
         {
-            for (var x = 0; x < newTex.width; x++)
+            for (var y = 0; y < newTex.height; y++)
             {
-                var xFrac = x * 1.0f / (newTex.width - 1);
-                var yFrac = y * 1.0f / (newTex.height - 1);
+                for (var x = 0; x < newTex.width; x++)
+                {
+                    var xFrac = x * 1.0f / (newTex.width - 1);
+                    var yFrac = y * 1.0f / (newTex.height - 1);
 
-                newPix[y * newTex.width + x] = origTex.GetPixelBilinear(xFrac, yFrac);
+                    newPix[y * newTex.width + x] = origTex.GetPixelBilinear(xFrac, yFrac);
+                }
             }
         }
 
@@ -751,9 +916,9 @@ public class ReproProjectWizard : EditorWindow
     private bool IsInputValid()
     {
         bool valid = false;
-        if (m_InputItems.Count > 0)
+        if (/*m_InputItems*/m_SessionInputItems.Count > 0)
         {
-            foreach (InputListItem item in m_InputItems)
+            foreach (InputListItem item in m_SessionInputItems)
             {
                 if (!string.IsNullOrEmpty(item.AssetPath))
                 {
@@ -834,6 +999,27 @@ public class ReproProjectWizard : EditorWindow
             }
         }
         return false;
+    }
+
+    private void OpenFolderInFileExplorer(string path)
+    {
+        string absolutePath = Path.Combine(m_CurrentProjectPath, path).Replace("/", "\\");
+#if UNITY_EDITOR_WIN
+        System.Diagnostics.Process.Start("explorer.exe", absolutePath);
+#elif UNITY_EDITOR_OSX	
+
+#endif
+    }
+
+    void OnEnable()
+    {
+        //Reload settings if this assembly has changed.
+        AssemblyReloadEvents.afterAssemblyReload += LoadSettings;
+    }
+
+    void OnDisable()
+    {
+        AssemblyReloadEvents.afterAssemblyReload -= LoadSettings;
     }
 }
 

@@ -1,0 +1,14 @@
+{
+  "name": "com.unity.support.repro-wizard",
+  "displayName": "Repro Project Wizard",
+  "version": "0.0.2-preview",
+  "unity": "2018.4",
+  "keywords": [
+    "unity",
+    "support",
+    "tools"
+  ],
+  "description": "Use this tool to create a small reproduction project when submitting a bug to Unity.",
+  "dependencies": {
+  }
+}

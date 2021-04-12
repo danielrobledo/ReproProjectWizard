@@ -70,4 +70,3 @@ Hit this button to start the process of creating a new project.
 
 * The tool doesn’t include assets assigned to settings files. These need to be added to the Common Files list manually. Graphics Settings has been hard coded to copy SRP and Custom Shader resources. 
 * Dependencies of asset bundles are not tracked currently.
-
